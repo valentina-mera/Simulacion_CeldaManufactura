@@ -60,13 +60,13 @@
         "*.asset": "yaml",
         "*.meta": "yaml",
         "*.prefab": "yaml",
-        "*.unity": "yaml",
+        "*.unity": "yaml"
     },
     "explorer.fileNesting.enabled": true,
     "explorer.fileNesting.patterns": {
         "*.sln": "*.csproj",
         "*.slnx": "*.csproj"
     },
-    "dotnet.defaultSolution": "Simulacion_CeldaManufactura_KukaScorbot.slnx",
+    "dotnet.defaultSolution": "Simulacion_CeldaManufactura.slnx",
     "dotnet.enableWorkspaceBasedDevelopment": false
 }
