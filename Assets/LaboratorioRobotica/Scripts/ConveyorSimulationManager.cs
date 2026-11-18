@@ -21,6 +21,12 @@ namespace LaboratorioRobotica
         [Range(0.05f, 0.80f)]
         public float beltSpeedMetersPerSec = 0.28f;
 
+        [Tooltip("Sentido de giro de la banda: 1 = Normal (Horario), -1 = Reversa (Antihorario)")]
+        public int beltDirection = 1;
+
+        [Tooltip("Si está activo, la banda gira de forma continua ignorando las paradas en sensores")]
+        public bool continuousFreeMode = false;
+
         public BeltSystemStatus systemStatus = BeltSystemStatus.Running;
 
         [Tooltip("Si está activo, cuando una bandeja va sola sin pieza el sensor detiene la banda en estado de ADVERTENCIA esperando confirmación o auto-continúa tras 3.5 s")]
@@ -30,7 +36,7 @@ namespace LaboratorioRobotica
         public bool showHudPanels = true;
 
         [Tooltip("Mostrar u ocultar el panel inferior derecho de cámaras y registro de eventos")]
-        public bool showRightLogPanel = true;
+        public bool showRightLogPanel = false;
 
         [Tooltip("Mostrar etiquetas 3D en pantalla con las medidas del PDF (484.5 cm, 138.5 cm, 96 cm, 17.3 cm, bandejas, sensores)")]
         public bool show3DDimensionLabels = false;
@@ -43,6 +49,10 @@ namespace LaboratorioRobotica
         public List<TrayController> trays = new List<TrayController>();
         public MagneticStationSensor activeHoldingSensor;
         public int selectedTrayIndex = 0;
+
+        // Pestaña opcional desplegable en el tablero compacto (0 = Ninguna, 1 = Bandejas, 2 = Cámaras/Vistas)
+        private int _expandedSubTab = 0;
+        private int _targetStationFilter = 0; // 0 = Todas, 1..3 = Solo esa estación
 
         // Animación visual de los eslabones crema de la banda (3 cm de paso, 4 cm de ancho)
         private readonly List<Transform> _animatedSlatPairs = new List<Transform>();
@@ -193,15 +203,28 @@ namespace LaboratorioRobotica
 
         private void AdvanceBeltAndTrays(float dt)
         {
+            float sign = beltDirection >= 0 ? 1f : -1f;
+            float deltaDist = beltSpeedMetersPerSec * sign * dt;
+            StepBeltByDistance(deltaDist, checkSensors: !continuousFreeMode);
+        }
+
+        public void StepBeltByDistance(float deltaDist, bool checkSensors)
+        {
             float perimeter = ConveyorDimensions.TotalLoopPerimeter;
-            float deltaDist = beltSpeedMetersPerSec * dt;
+
+            // Si había un sensor reteniendo y el operador mueve manualmente la banda, liberar retención
+            if (!checkSensors && activeHoldingSensor != null && Mathf.Abs(deltaDist) > 0.0005f)
+            {
+                activeHoldingSensor.ReleaseCurrentTray();
+                activeHoldingSensor = null;
+            }
 
             // 1. Mover visualmente los eslabones crema de la banda (paso de 3 cm = 0.03 m)
-            _slatScrollOffset = (_slatScrollOffset + deltaDist) % perimeter;
+            _slatScrollOffset = WrapLoopDistance(_slatScrollOffset + deltaDist, perimeter);
             for (int i = 0; i < _animatedSlatPairs.Count; i++)
             {
                 if (_animatedSlatPairs[i] == null) continue;
-                float d = (_animatedSlatBaseDistances[i] + _slatScrollOffset) % perimeter;
+                float d = WrapLoopDistance(_animatedSlatBaseDistances[i] + _slatScrollOffset, perimeter);
                 ConveyorDimensions.EvaluateLoopPath(d, out Vector3 sPos, out Vector3 sTan, out _);
                 _animatedSlatPairs[i].position = sPos;
                 if (sTan.sqrMagnitude > 0.001f)
@@ -216,20 +239,79 @@ namespace LaboratorioRobotica
                 TrayController tray = trays[t];
                 if (tray == null) continue;
 
-                tray.distanceOnLoop = (tray.distanceOnLoop + deltaDist) % perimeter;
+                tray.distanceOnLoop = WrapLoopDistance(tray.distanceOnLoop + deltaDist, perimeter);
                 tray.UpdateTransformOnBelt();
+
+                if (!checkSensors) continue;
 
                 // Comprobar sensores magnéticos de las estaciones
                 for (int s = 0; s < stationSensors.Count; s++)
                 {
                     MagneticStationSensor sensor = stationSensors[s];
-                    if (sensor != null && sensor.CanTriggerForTray(tray))
+                    if (sensor == null) continue;
+                    if (_targetStationFilter > 0 && sensor.stationNumber != _targetStationFilter) continue;
+
+                    if (sensor.CanTriggerForTray(tray))
                     {
                         TriggerSensorStop(sensor, tray);
                         return; // La banda se detiene inmediatamente al activarse el sensor magnético
                     }
                 }
             }
+        }
+
+        public void SendSelectedTrayToStation(int stationNumber, bool instantJump)
+        {
+            if (trays.Count == 0) return;
+            selectedTrayIndex = Mathf.Clamp(selectedTrayIndex, 0, trays.Count - 1);
+            TrayController sel = trays[selectedTrayIndex];
+            if (sel == null) return;
+
+            MagneticStationSensor targetSensor = null;
+            for (int i = 0; i < stationSensors.Count; i++)
+            {
+                if (stationSensors[i] != null && stationSensors[i].stationNumber == stationNumber)
+                {
+                    targetSensor = stationSensors[i];
+                    break;
+                }
+            }
+            if (targetSensor == null) return;
+
+            targetSensor.sensorActive = true;
+            _targetStationFilter = stationNumber;
+            continuousFreeMode = false;
+
+            if (instantJump)
+            {
+                if (activeHoldingSensor != null)
+                {
+                    activeHoldingSensor.ReleaseCurrentTray();
+                    activeHoldingSensor = null;
+                }
+                float perimeter = ConveyorDimensions.TotalLoopPerimeter;
+                float shift = WrapLoopDistance(targetSensor.distanceOnLoop - sel.distanceOnLoop, perimeter);
+                StepBeltByDistance(shift, checkSensors: false);
+                TriggerSensorStop(targetSensor, sel);
+            }
+            else
+            {
+                if (activeHoldingSensor != null)
+                {
+                    ResolveActiveSensorStop($"Enviando Bandeja #{sel.palletId} hacia Estación {stationNumber}...");
+                }
+                else
+                {
+                    systemStatus = BeltSystemStatus.Running;
+                    _activeBannerMessage = $"Dirigiendo Bandeja #{sel.palletId} hacia Estación {stationNumber} ({targetSensor.stationName}).";
+                }
+            }
+        }
+
+        private static float WrapLoopDistance(float d, float perimeter)
+        {
+            float r = d % perimeter;
+            return r < 0f ? r + perimeter : r;
         }
 
         private void TriggerSensorStop(MagneticStationSensor sensor, TrayController tray)
@@ -705,109 +787,197 @@ namespace LaboratorioRobotica
 
         private void DrawTopStatusBanner(bool fullWidth)
         {
-            Color bannerColor = new Color(0.10f, 0.45f, 0.22f, 0.92f);
-            string statusTitle = "ESTADO LÍNEA: EN MARCHA (BANDA AVANZANDO)";
+            Color bannerColor = new Color(0.10f, 0.45f, 0.22f, 0.90f);
+            string dirLabel = beltDirection >= 0 ? "▶ AVANCE" : "◀ REVERSA";
+            string modeLabel = continuousFreeMode ? "MODO LIBRE" : (_targetStationFilter == 0 ? "AUTO (3 EST.)" : $"DESTINO: EST. {_targetStationFilter}");
+            string statusTitle = $"EN MARCHA [{dirLabel} | {modeLabel}] — {(beltSpeedMetersPerSec * 100f):F0} cm/s";
 
             switch (systemStatus)
             {
                 case BeltSystemStatus.StoppedForRobotWork:
                     bannerColor = new Color(0.10f, 0.38f, 0.68f, 0.94f);
-                    statusTitle = $"BANDA DETENIDA POR SENSOR MAGNÉTICO — ESTACIÓN ACTIVA ({activeHoldingSensor?.stationName})";
+                    statusTitle = $"DETENIDA EN {activeHoldingSensor?.stationName}";
                     break;
                 case BeltSystemStatus.PausedByWarningEmptyTray:
                     bannerColor = new Color(0.82f, 0.50f, 0.04f, 0.95f);
-                    statusTitle = $"⚠ ADVERTENCIA: BANDEJA VA SOLA SIN PIEZA EN {activeHoldingSensor?.stationName}";
+                    statusTitle = $"⚠ ADVERTENCIA: BANDEJA SIN PIEZA EN {activeHoldingSensor?.stationName}";
                     break;
                 case BeltSystemStatus.StoppedByErrorBadTray:
                     bannerColor = new Color(0.80f, 0.12f, 0.12f, 0.96f);
-                    statusTitle = $"✖ ERROR CRÍTICO: BANDEJA VOLTEADA O MAL POSICIONADA EN {activeHoldingSensor?.stationName}";
+                    statusTitle = $"✖ ERROR: BANDEJA MAL POSICIONADA EN {activeHoldingSensor?.stationName}";
                     break;
                 case BeltSystemStatus.ManualPause:
-                    bannerColor = new Color(0.35f, 0.35f, 0.40f, 0.92f);
-                    statusTitle = "ESTADO LÍNEA: PAUSA MANUAL DEL OPERADOR";
+                    bannerColor = new Color(0.28f, 0.30f, 0.36f, 0.92f);
+                    statusTitle = "PAUSA MANUAL — Usa el deslizador o botones para mover la banda";
                     break;
             }
 
             Color prevBg = GUI.backgroundColor;
             GUI.backgroundColor = bannerColor;
-            float startX = fullWidth ? 235f : 390f;
-            Rect bannerRect = new Rect(startX, 10f, Screen.width - startX - 15f, 54f);
-            GUI.Box(bannerRect, $"{statusTitle}\n{_activeBannerMessage}", _bannerStyle);
+            float startX = fullWidth ? 235f : 345f;
+            Rect bannerRect = new Rect(startX, 10f, Screen.width - startX - 12f, 36f);
+            GUI.Box(bannerRect, statusTitle, _bannerStyle);
             GUI.backgroundColor = prevBg;
         }
 
         private void DrawLeftControlPanel()
         {
-            Rect panelRect = new Rect(10f, 10f, 372f, Screen.height - 20f);
+            float panelHeight = _expandedSubTab == 0 ? 252f : (_expandedSubTab == 1 ? 378f : 332f);
+            Rect panelRect = new Rect(10f, 10f, 326f, panelHeight);
             GUI.Box(panelRect, "", _boxStyle);
 
-            GUILayout.BeginArea(new Rect(20f, 18f, 352f, Screen.height - 36f));
+            GUILayout.BeginArea(new Rect(18f, 16f, 310f, panelHeight - 12f));
 
-            // Botones rápidos arriba del todo para limpiar la pantalla mientras simulas
+            // --- CABECERA COMPACTA ---
             GUILayout.BeginHorizontal();
-            GUI.backgroundColor = new Color(0.20f, 0.65f, 1.0f);
-            if (GUILayout.Button("👁 Ocultar Todo (Tecla H)", _buttonStyle, GUILayout.Height(24f)))
+            GUILayout.Label("TABLERO DE MOVIMIENTO", _headerStyle);
+            GUILayout.FlexibleSpace();
+            GUI.backgroundColor = new Color(0.25f, 0.60f, 0.95f);
+            if (GUILayout.Button("Ocultar (H)", _buttonStyle, GUILayout.Width(82f), GUILayout.Height(20f)))
             {
                 showHudPanels = false;
-            }
-            GUI.backgroundColor = showRightLogPanel ? new Color(0.75f, 0.78f, 0.85f) : new Color(0.45f, 0.50f, 0.58f);
-            if (GUILayout.Button(showRightLogPanel ? "Ocultar Registro Der." : "Mostrar Registro Der.", _buttonStyle, GUILayout.Height(24f)))
-            {
-                showRightLogPanel = !showRightLogPanel;
             }
             GUI.backgroundColor = Color.white;
             GUILayout.EndHorizontal();
 
             GUILayout.Space(4f);
-            GUILayout.Label("LABORATORIO ROBÓTICA INDUSTRIAL (FMS)", _headerStyle);
-            GUILayout.Label("Simulación de Banda Eshed Robotec, Sensores Magnéticos y Estaciones (Escala 1:1)", _labelStyle);
-            GUILayout.Space(6f);
 
-            // --- CONTROLES DE BANDA ---
-            GUILayout.Label("1. CONTROL DE LA CINTA TRANSPORTADORA", _headerStyle);
+            // --- 1. MARCHA, PAUSA Y SENTIDO DE GIRO ---
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button(systemStatus == BeltSystemStatus.ManualPause ? "▶ Reanudar Banda" : "⏸ Pausar Banda", _buttonStyle, GUILayout.Height(26f)))
+            GUI.backgroundColor = (beltDirection < 0 && systemStatus == BeltSystemStatus.Running)
+                ? new Color(0.25f, 0.75f, 1.0f) : Color.white;
+            if (GUILayout.Button("◀ Reversa", _buttonStyle, GUILayout.Height(28f)))
             {
-                if (systemStatus == BeltSystemStatus.ManualPause)
+                beltDirection = -1;
+                if (activeHoldingSensor != null) ResolveActiveSensorStop("Marcha en reversa activada.");
+                else systemStatus = BeltSystemStatus.Running;
+            }
+
+            bool isPaused = systemStatus == BeltSystemStatus.ManualPause;
+            GUI.backgroundColor = isPaused ? new Color(0.25f, 0.85f, 0.40f) : new Color(0.95f, 0.65f, 0.20f);
+            if (GUILayout.Button(isPaused ? "▶ Marcha" : "⏸ Parar", _buttonStyle, GUILayout.Height(28f)))
+            {
+                if (isPaused)
                     systemStatus = BeltSystemStatus.Running;
                 else if (systemStatus == BeltSystemStatus.Running)
                     systemStatus = BeltSystemStatus.ManualPause;
                 else
-                    ResolveActiveSensorStop("Continuación forzada por el operador.");
+                    ResolveActiveSensorStop("Banda reanudada por el operador.");
             }
+
+            GUI.backgroundColor = (beltDirection > 0 && systemStatus == BeltSystemStatus.Running)
+                ? new Color(0.25f, 0.75f, 1.0f) : Color.white;
+            if (GUILayout.Button("Avance ▶", _buttonStyle, GUILayout.Height(28f)))
+            {
+                beltDirection = 1;
+                if (activeHoldingSensor != null) ResolveActiveSensorStop("Marcha en avance activada.");
+                else systemStatus = BeltSystemStatus.Running;
+            }
+            GUI.backgroundColor = Color.white;
+            GUILayout.EndHorizontal();
+
+            // --- 2. VELOCIDAD Y DESPLAZAMIENTO MANUAL EN VIVO (JOG / POSICIÓN) ---
+            GUILayout.BeginHorizontal();
+            GUILayout.Label($"Velocidad: {(beltSpeedMetersPerSec * 100f):F0} cm/s", _labelStyle, GUILayout.Width(112f));
+            beltSpeedMetersPerSec = GUILayout.HorizontalSlider(beltSpeedMetersPerSec, 0.05f, 0.80f);
+            GUILayout.EndHorizontal();
+
+            float perimeter = ConveyorDimensions.TotalLoopPerimeter;
+            TrayController refTray = (trays.Count > 0) ? trays[Mathf.Clamp(selectedTrayIndex, 0, trays.Count - 1)] : null;
+            float currentPos = refTray != null ? refTray.distanceOnLoop : _slatScrollOffset;
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Mover Manual:", _labelStyle, GUILayout.Width(86f));
+            if (GUILayout.RepeatButton("⏪", _buttonStyle, GUILayout.Width(28f), GUILayout.Height(20f)))
+            {
+                StepBeltByDistance(-0.45f * Time.deltaTime, checkSensors: false);
+            }
+            float newPos = GUILayout.HorizontalSlider(currentPos, 0f, perimeter);
+            if (Mathf.Abs(newPos - currentPos) > 0.002f)
+            {
+                StepBeltByDistance(newPos - currentPos, checkSensors: false);
+            }
+            if (GUILayout.RepeatButton("⏩", _buttonStyle, GUILayout.Width(28f), GUILayout.Height(20f)))
+            {
+                StepBeltByDistance(0.45f * Time.deltaTime, checkSensors: false);
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(4f);
+
+            // --- 3. MODO DE PARADA Y ENVÍO RÁPIDO A ESTACIÓN ---
+            GUILayout.Label("Paradas / Ir a Estación:", _labelStyle);
+            GUILayout.BeginHorizontal();
+            GUI.backgroundColor = continuousFreeMode ? new Color(0.25f, 0.80f, 0.45f) : Color.white;
+            if (GUILayout.Button("Libre", _buttonStyle, GUILayout.Height(24f)))
+            {
+                continuousFreeMode = true;
+                if (activeHoldingSensor != null) ResolveActiveSensorStop("Modo libre continuo activado.");
+                else systemStatus = BeltSystemStatus.Running;
+            }
+
+            GUI.backgroundColor = (!continuousFreeMode && _targetStationFilter == 0) ? new Color(0.25f, 0.65f, 1f) : Color.white;
+            if (GUILayout.Button("Todas", _buttonStyle, GUILayout.Height(24f)))
+            {
+                continuousFreeMode = false;
+                _targetStationFilter = 0;
+                for (int i = 0; i < stationSensors.Count; i++)
+                {
+                    if (stationSensors[i] != null) stationSensors[i].sensorActive = true;
+                }
+            }
+
+            for (int st = 1; st <= 3; st++)
+            {
+                bool isTarget = !continuousFreeMode && _targetStationFilter == st;
+                GUI.backgroundColor = isTarget ? new Color(0.25f, 0.65f, 1f) : Color.white;
+                if (GUILayout.Button($"E{st}", _buttonStyle, GUILayout.Height(24f)))
+                {
+                    // Un clic envía la bandeja hacia esa estación; si ya estaba elegida, salta directo a ella
+                    SendSelectedTrayToStation(st, instantJump: isTarget);
+                }
+            }
+            GUI.backgroundColor = Color.white;
+            GUILayout.EndHorizontal();
+
+            // Si está detenida en un sensor, mostrar botón directo para liberar o saltar a la siguiente
             if (activeHoldingSensor != null)
             {
-                GUI.backgroundColor = new Color(0.3f, 0.85f, 0.4f);
-                if (GUILayout.Button("Liberar Sensor Actual", _buttonStyle, GUILayout.Height(26f)))
+                GUI.backgroundColor = new Color(0.25f, 0.85f, 0.40f);
+                if (GUILayout.Button($"⏭ Liberar {activeHoldingSensor.stationName} y Continuar", _buttonStyle, GUILayout.Height(24f)))
                 {
                     ResolveActiveSensorStop("Sensor liberado manualmente; banda reanudada.");
                 }
                 GUI.backgroundColor = Color.white;
             }
-            GUILayout.EndHorizontal();
-
-            GUILayout.BeginHorizontal();
-            GUILayout.Label($"Velocidad Cinta: {(beltSpeedMetersPerSec * 100f):F0} cm/s", _labelStyle, GUILayout.Width(145f));
-            beltSpeedMetersPerSec = GUILayout.HorizontalSlider(beltSpeedMetersPerSec, 0.08f, 0.65f);
-            GUILayout.EndHorizontal();
-
-            GUILayout.BeginHorizontal();
-            show3DDimensionLabels = GUILayout.Toggle(show3DDimensionLabels, " Cotas PDF (cm)");
-            showStation3DLabels = GUILayout.Toggle(showStation3DLabels, " Etiquetas Estaciones");
-            GUILayout.EndHorizontal();
 
             GUILayout.Space(6f);
 
-            // --- PRUEBAS RÁPIDAS DE ERROR Y ADVERTENCIA (REabastecimiento / Volteo) ---
-            GUILayout.Label("2. SIMULAR CONDICIONES EN BANDEJA SELECCIONADA", _headerStyle);
-            if (trays.Count > 0)
+            // --- 4. BARRA INFERIOR DE OPCIONES DESPLEGABLES (MENOS COSAS EN PANTALLA) ---
+            GUILayout.BeginHorizontal();
+            GUI.backgroundColor = (_expandedSubTab == 1) ? new Color(0.25f, 0.65f, 1f) : new Color(0.78f, 0.82f, 0.88f);
+            if (GUILayout.Button("📦 Bandejas", _buttonStyle, GUILayout.Height(22f)))
             {
+                _expandedSubTab = (_expandedSubTab == 1) ? 0 : 1;
+            }
+            GUI.backgroundColor = (_expandedSubTab == 2) ? new Color(0.25f, 0.65f, 1f) : new Color(0.78f, 0.82f, 0.88f);
+            if (GUILayout.Button("🎥 Vistas y Cotas", _buttonStyle, GUILayout.Height(22f)))
+            {
+                _expandedSubTab = (_expandedSubTab == 2) ? 0 : 2;
+            }
+            GUI.backgroundColor = Color.white;
+            GUILayout.EndHorizontal();
+
+            // Sub-pestaña 1: Bandejas (compacta)
+            if (_expandedSubTab == 1 && trays.Count > 0)
+            {
+                GUILayout.Space(4f);
                 selectedTrayIndex = Mathf.Clamp(selectedTrayIndex, 0, trays.Count - 1);
                 GUILayout.BeginHorizontal();
                 for (int i = 0; i < trays.Count; i++)
                 {
                     GUI.backgroundColor = (i == selectedTrayIndex) ? new Color(0.25f, 0.65f, 1f) : Color.white;
-                    if (GUILayout.Button($"Bandeja #{trays[i].palletId}", _buttonStyle))
+                    if (GUILayout.Button($"Bandeja #{trays[i].palletId}", _buttonStyle, GUILayout.Height(22f)))
                     {
                         selectedTrayIndex = i;
                     }
@@ -816,94 +986,75 @@ namespace LaboratorioRobotica
                 GUILayout.EndHorizontal();
 
                 TrayController sel = trays[selectedTrayIndex];
-                GUILayout.Label($"Estado actual: {sel.GetDiagnosticDescription()}", _labelStyle);
-
-                // Botones de acción directa para demostrar al profesor / compañeros:
+                GUILayout.BeginHorizontal();
                 GUI.backgroundColor = new Color(0.25f, 0.85f, 0.35f);
-                if (GUILayout.Button("✔ Poner Bandeja NORMAL (Con Pieza y Bien Ubicada)", _buttonStyle, GUILayout.Height(25f)))
+                if (GUILayout.Button("✔ Normal", _buttonStyle, GUILayout.Height(24f)))
                 {
                     sel.orientationState = TrayOrientationState.Correcta;
                     sel.loadState = TrayLoadState.ConPieza;
                     sel.RefreshVisualState();
                     if (activeHoldingSensor != null && activeHoldingSensor.currentDetectedTray == sel)
-                    {
                         TriggerSensorStop(activeHoldingSensor, sel);
-                    }
-                    LogPlcEvent("OPERADOR", $"Bandeja #{sel.palletId} normalizada (posición correcta + pieza de trabajo).");
                 }
-
-                GUI.backgroundColor = new Color(0.95f, 0.30f, 0.30f);
-                GUILayout.BeginHorizontal();
-                if (GUILayout.Button("✖ Voltear 180° (ERROR)", _buttonStyle, GUILayout.Height(25f)))
-                {
-                    sel.orientationState = TrayOrientationState.VolteadaBocaAbajo;
-                    sel.RefreshVisualState();
-                    if (activeHoldingSensor != null && activeHoldingSensor.currentDetectedTray == sel)
-                    {
-                        TriggerSensorStop(activeHoldingSensor, sel);
-                    }
-                    LogPlcEvent("SIMULAR ERROR", $"Bandeja #{sel.palletId} volteada boca abajo (180°). Dará ERROR al llegar al sensor.");
-                }
-                if (GUILayout.Button("✖ Girar 90° Mal (ERROR)", _buttonStyle, GUILayout.Height(25f)))
-                {
-                    sel.orientationState = TrayOrientationState.MalPosicionada;
-                    sel.RefreshVisualState();
-                    if (activeHoldingSensor != null && activeHoldingSensor.currentDetectedTray == sel)
-                    {
-                        TriggerSensorStop(activeHoldingSensor, sel);
-                    }
-                    LogPlcEvent("SIMULAR ERROR", $"Bandeja #{sel.palletId} girada 90° fuera de agarre. Dará ERROR al llegar al sensor.");
-                }
-                GUILayout.EndHorizontal();
-
                 GUI.backgroundColor = new Color(1.0f, 0.75f, 0.20f);
-                GUILayout.BeginHorizontal();
-                if (GUILayout.Button("⚠ Quitar Pieza (ADVERTENCIA)", _buttonStyle, GUILayout.Height(25f)))
+                if (GUILayout.Button("⚠ Sin Pieza", _buttonStyle, GUILayout.Height(24f)))
                 {
                     sel.orientationState = TrayOrientationState.Correcta;
                     sel.loadState = TrayLoadState.SinPieza;
                     sel.RefreshVisualState();
                     if (activeHoldingSensor != null && activeHoldingSensor.currentDetectedTray == sel)
-                    {
                         TriggerSensorStop(activeHoldingSensor, sel);
-                    }
-                    LogPlcEvent("SIMULAR ADVERTENCIA", $"Bandeja #{sel.palletId} va sola SIN pieza. Dará ADVERTENCIA en el sensor.");
                 }
-                if (GUILayout.Button("⚠ Solo Base 20x16cm", _buttonStyle, GUILayout.Height(25f)))
+                GUI.backgroundColor = new Color(0.95f, 0.30f, 0.30f);
+                if (GUILayout.Button("✖ Voltear", _buttonStyle, GUILayout.Height(24f)))
                 {
-                    sel.orientationState = TrayOrientationState.Correcta;
-                    sel.loadState = TrayLoadState.SoloBandejaInferior;
+                    sel.orientationState = TrayOrientationState.VolteadaBocaAbajo;
                     sel.RefreshVisualState();
                     if (activeHoldingSensor != null && activeHoldingSensor.currentDetectedTray == sel)
-                    {
                         TriggerSensorStop(activeHoldingSensor, sel);
+                }
+                GUI.backgroundColor = Color.white;
+                GUILayout.EndHorizontal();
+
+                GUILayout.BeginHorizontal();
+                for (int st = 1; st <= 3; st++)
+                {
+                    if (GUILayout.Button($"📍 Situar en E{st}", _buttonStyle, GUILayout.Height(22f)))
+                    {
+                        SendSelectedTrayToStation(st, instantJump: true);
                     }
-                    LogPlcEvent("SIMULAR ADVERTENCIA", $"Bandeja #{sel.palletId} sin bandeja superior 010004 ni pieza.");
                 }
                 GUILayout.EndHorizontal();
-                GUI.backgroundColor = Color.white;
             }
 
-            GUILayout.Space(8f);
-
-            // --- SENSORES MAGNÉTICOS EN LAS 3 ESTACIONES DE LA LÍNEA ---
-            GUILayout.Label("3. SENSORES MAGNÉTICOS (3 ESTACIONES)", _headerStyle);
-
-            for (int i = 0; i < stationSensors.Count; i++)
+            // Sub-pestaña 2: Vistas de Cámara y Etiquetas 3D (compacta)
+            if (_expandedSubTab == 2)
             {
-                MagneticStationSensor s = stationSensors[i];
-                if (s == null) continue;
+                GUILayout.Space(4f);
+                if (_cameraController != null)
+                {
+                    GUILayout.BeginHorizontal();
+                    if (GUILayout.Button("General", _buttonStyle, GUILayout.Height(22f)))
+                        _cameraController.SetPresetView(new Vector3(0f, 0.90f, 0f), 4.6f, -128f, 30f);
+                    if (GUILayout.Button("Est. 1", _buttonStyle, GUILayout.Height(22f)))
+                        _cameraController.SetPresetView(new Vector3(0.75f, 1.10f, 1.09f), 1.85f, -55f, 24f);
+                    if (GUILayout.Button("Est. 2", _buttonStyle, GUILayout.Height(22f)))
+                        _cameraController.SetPresetView(new Vector3(-0.75f, 1.05f, 0.78f), 1.75f, 110f, 24f);
+                    if (GUILayout.Button("Est. 3", _buttonStyle, GUILayout.Height(22f)))
+                        _cameraController.SetPresetView(new Vector3(0.0f, 1.08f, 2.30f), 1.65f, 15f, 24f);
+                    if (trays.Count > 0 && GUILayout.Button("Seguir", _buttonStyle, GUILayout.Height(22f)))
+                    {
+                        TrayController sel = trays[Mathf.Clamp(selectedTrayIndex, 0, trays.Count - 1)];
+                        _cameraController.SetPresetView(sel.transform.position, 0.95f, -45f, 32f, sel.transform);
+                    }
+                    GUILayout.EndHorizontal();
+                }
 
-                GUILayout.BeginVertical(GUI.skin.box);
                 GUILayout.BeginHorizontal();
-                s.sensorActive = GUILayout.Toggle(s.sensorActive, $" {s.stationName}");
+                show3DDimensionLabels = GUILayout.Toggle(show3DDimensionLabels, " Cotas PDF");
+                showStation3DLabels = GUILayout.Toggle(showStation3DLabels, " Etiquetas 3D");
+                showRightLogPanel = GUILayout.Toggle(showRightLogPanel, " Log PLC");
                 GUILayout.EndHorizontal();
-
-                string stateTxt = s.inPlaceSignal
-                    ? $"IN PLACE=1 | ID={((s.bitID2 ? 1 : 0))}{((s.bitID1 ? 1 : 0))}{((s.bitID0 ? 1 : 0))} ({s.currentState})"
-                    : (s.sensorActive ? "IN PLACE=0 (Esperando bandeja...)" : "Sensor desactivado temporalmente");
-                GUILayout.Label($"   {s.robotTypeDescription} | {stateTxt}", _labelStyle);
-                GUILayout.EndVertical();
             }
 
             GUILayout.EndArea();
@@ -911,47 +1062,19 @@ namespace LaboratorioRobotica
 
         private void DrawRightCameraAndLogPanel()
         {
-            float panelW = 430f;
-            float panelH = 235f;
+            float panelW = 360f;
+            float panelH = 140f;
             Rect rightRect = new Rect(Screen.width - panelW - 10f, Screen.height - panelH - 10f, panelW, panelH);
             GUI.Box(rightRect, "", _boxStyle);
 
             GUILayout.BeginArea(new Rect(rightRect.x + 10f, rightRect.y + 8f, panelW - 20f, panelH - 16f));
-
-            GUILayout.Label("CÁMARAS RÁPIDAS (Clic Derecho: Rotar | Rueda: Zoom | WASD: Mover)", _headerStyle);
-            if (_cameraController != null)
-            {
-                GUILayout.BeginHorizontal();
-                if (GUILayout.Button("Vista General", _buttonStyle))
-                    _cameraController.SetPresetView(new Vector3(0f, 0.90f, 0f), 4.6f, -128f, 30f);
-                if (GUILayout.Button("1. Inicio / Inventario", _buttonStyle))
-                    _cameraController.SetPresetView(new Vector3(0.75f, 1.10f, 1.09f), 1.85f, -55f, 24f);
-                if (GUILayout.Button("2. Manufactura", _buttonStyle))
-                    _cameraController.SetPresetView(new Vector3(-0.75f, 1.05f, 0.78f), 1.75f, 110f, 24f);
-                if (GUILayout.Button("3. Almacenamiento", _buttonStyle))
-                    _cameraController.SetPresetView(new Vector3(0.0f, 1.08f, 2.30f), 1.65f, 15f, 24f);
-                GUILayout.EndHorizontal();
-
-                GUILayout.BeginHorizontal();
-                if (GUILayout.Button("Zoom Sensor/Bandeja", _buttonStyle))
-                    _cameraController.SetPresetView(new Vector3(0.606f, 0.98f, 1.09f), 0.65f, -45f, 35f);
-                if (trays.Count > 0 && GUILayout.Button("Seguir Bandeja Seleccionada", _buttonStyle))
-                {
-                    TrayController sel = trays[Mathf.Clamp(selectedTrayIndex, 0, trays.Count - 1)];
-                    _cameraController.SetPresetView(sel.transform.position, 0.95f, -45f, 32f, sel.transform);
-                }
-                GUILayout.EndHorizontal();
-            }
-
-            GUILayout.Space(4f);
-            GUILayout.Label("REGISTRO DE EVENTOS PLC / SENSORES MAGNÉTICOS:", _headerStyle);
-            _logScrollPos = GUILayout.BeginScrollView(_logScrollPos, GUILayout.Height(110f));
+            GUILayout.Label("REGISTRO DE EVENTOS PLC:", _headerStyle);
+            _logScrollPos = GUILayout.BeginScrollView(_logScrollPos, GUILayout.Height(95f));
             for (int i = 0; i < _eventLog.Count; i++)
             {
                 GUILayout.Label(_eventLog[i], _labelStyle);
             }
             GUILayout.EndScrollView();
-
             GUILayout.EndArea();
         }
 
