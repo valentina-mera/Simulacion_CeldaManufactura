@@ -26,8 +26,8 @@ namespace LaboratorioRobotica
         public bool isOperationalInSimulation = true;
 
         // Punto de montaje y luz/indicador de estación activa mientras la banda se detiene en el sensor
-        private Transform _mountingPoint;
-        private Renderer _mountingPadRenderer;
+        [SerializeField] private Transform _mountingPoint;
+        [SerializeField] private Renderer _mountingPadRenderer;
         private bool _isWorking = false;
         private float _workNormalizedTime = 0f;
 

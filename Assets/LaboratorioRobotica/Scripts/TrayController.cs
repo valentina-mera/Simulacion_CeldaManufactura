@@ -58,12 +58,12 @@ namespace LaboratorioRobotica
         public string lastStationProcessed = "Ninguna";
 
         // Referencias visuales internas para animar volteo/rotación/carga en tiempo real
-        private Transform _visualPivot;
-        private GameObject _upperTrayGroup;
-        private GameObject _workpieceObject;
-        private GameObject _statusBadgeObject;
-        private Renderer _statusBadgeRenderer;
-        private Renderer _workpieceRenderer;
+        [SerializeField] private Transform _visualPivot;
+        [SerializeField] private GameObject _upperTrayGroup;
+        [SerializeField] private GameObject _workpieceObject;
+        [SerializeField] private GameObject _statusBadgeObject;
+        [SerializeField] private Renderer _statusBadgeRenderer;
+        [SerializeField] private Renderer _workpieceRenderer;
 
         public bool HasOrientationError => orientationState != TrayOrientationState.Correcta;
         public bool HasMissingPieceWarning => loadState != TrayLoadState.ConPieza;

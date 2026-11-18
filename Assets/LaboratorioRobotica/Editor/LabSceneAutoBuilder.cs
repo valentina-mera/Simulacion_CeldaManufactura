@@ -3,20 +3,22 @@ using System.IO;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.SceneManagement;
 
 namespace LaboratorioRobotica.EditorTools
 {
     /// <summary>
-    /// Script de Editor que:
-    /// 1. Agrega el menú superior "Robótica Industrial" en Unity para crear/reconstruir el laboratorio con 1 clic.
-    /// 2. Al abrir el proyecto por primera vez en Unity, construye automáticamente los modelos 3D en la escena
-    ///    y enfoca la cámara del Editor para que todo se vea de inmediato sin pasos manuales complicados.
+    /// Script de Editor que construye y guarda automáticamente como Prefabs:
+    /// 1. BandaTransportadora_FMS.prefab (únicamente la banda, estaciones/sensores y bandejas, sin piso).
+    /// 2. Canvas_PanelControlBanda.prefab (Panel hecho en Unity UI / Canvas sencillo con botón Simular Sensor).
     /// </summary>
     [InitializeOnLoad]
     public static class LabSceneAutoBuilder
     {
-        private const string FirstLoadSessionKey = "LabRobotica_AutoBuiltOnce";
+        public const string PrefabsDir = "Assets/LaboratorioRobotica/Prefabs";
+        public const string ConveyorPrefabPath = "Assets/LaboratorioRobotica/Prefabs/BandaTransportadora_FMS.prefab";
+        public const string UIPanelPrefabPath = "Assets/LaboratorioRobotica/Prefabs/Canvas_PanelControlBanda.prefab";
 
         static LabSceneAutoBuilder()
         {
@@ -28,66 +30,98 @@ namespace LaboratorioRobotica.EditorTools
             if (EditorApplication.isPlayingOrWillChangePlaymode) return;
 
             ConveyorSimulationManager manager = Object.FindObjectOfType<ConveyorSimulationManager>();
-            bool hasOldRobots = manager != null && manager.transform.Find("EstacionesRobots_Y_SensoresMagneticos") != null;
+            ConveyorUIPanel uiPanel = Object.FindObjectOfType<ConveyorUIPanel>();
+            bool hasOldFloor = manager != null && manager.transform.Find("EntornoLaboratorio") != null;
+            bool missingPrefabs = !File.Exists(ConveyorPrefabPath) || !File.Exists(UIPanelPrefabPath);
+            bool outdatedUI = uiPanel != null && uiPanel.builtLayoutVersion != ConveyorUIPanel.LayoutVersion;
 
-            if (hasOldRobots || (manager == null && !SessionState.GetBool(FirstLoadSessionKey, false)))
+            if (manager == null || uiPanel == null || hasOldFloor || missingPrefabs || outdatedUI)
             {
-                SessionState.SetBool(FirstLoadSessionKey, true);
-                BuildOrRefreshLaboratoryInCurrentScene(saveScene: true);
+                BuildWhenTextMeshProReady();
             }
         }
 
-        [MenuItem("Robótica Industrial/1. Generar Laboratorio Completo en Escena (Escala 1:1)", false, 10)]
+        [MenuItem("Robótica Industrial/1. Generar Prefabs (Banda Sin Piso + Panel UI) y Escena", false, 10)]
         public static void MenuGenerateLab()
         {
-            BuildOrRefreshLaboratoryInCurrentScene(saveScene: true);
+            BuildWhenTextMeshProReady();
         }
 
-        [MenuItem("Robótica Industrial/2. Simular Bandeja #1 VOLTEADA (Error 180°)", false, 30)]
-        public static void MenuFlipTray1()
+        // =========================================================================================
+        // TEXTMESHPRO (Unity 6: incluido en com.unity.ugui 2.0) - Importa la fuente SDF si falta
+        // =========================================================================================
+        private static bool TextMeshProEssentialsPresent()
         {
-            ConveyorSimulationManager mgr = Object.FindObjectOfType<ConveyorSimulationManager>();
-            if (mgr != null && mgr.trays.Count > 0)
-            {
-                mgr.trays[0].orientationState = TrayOrientationState.VolteadaBocaAbajo;
-                mgr.trays[0].RefreshVisualState();
-                SceneView.RepaintAll();
-            }
+            return Resources.Load<TMPro.TMP_Settings>("TMP Settings") != null;
         }
 
-        [MenuItem("Robótica Industrial/3. Simular Bandeja #1 SIN PIEZA (Advertencia)", false, 31)]
-        public static void MenuEmptyTray1()
+        /// <summary>
+        /// Si los recursos esenciales de TextMeshPro (fuente LiberationSans SDF y TMP Settings) no están
+        /// importados, los importa automáticamente desde el paquete uGUI y luego construye los prefabs.
+        /// </summary>
+        private static void BuildWhenTextMeshProReady()
         {
-            ConveyorSimulationManager mgr = Object.FindObjectOfType<ConveyorSimulationManager>();
-            if (mgr != null && mgr.trays.Count > 0)
+            if (TextMeshProEssentialsPresent())
             {
-                mgr.trays[0].orientationState = TrayOrientationState.Correcta;
-                mgr.trays[0].loadState = TrayLoadState.SinPieza;
-                mgr.trays[0].RefreshVisualState();
-                SceneView.RepaintAll();
+                BuildOrRefreshLaboratoryInCurrentScene(saveScene: true);
+                return;
             }
+
+            string packageRoot = Path.GetFullPath("Packages/com.unity.ugui");
+            string essentialsPkg = Path.Combine(packageRoot, "Package Resources", "TMP Essential Resources.unitypackage");
+            if (!File.Exists(essentialsPkg))
+            {
+                Debug.LogWarning("[Robótica Industrial] No se encontró 'TMP Essential Resources'. Impórtalo desde " +
+                                 "Window > TextMeshPro > Import TMP Essential Resources y vuelve a usar el menú Robótica Industrial > 1.");
+                BuildOrRefreshLaboratoryInCurrentScene(saveScene: true);
+                return;
+            }
+
+            AssetDatabase.importPackageCompleted += OnTmpEssentialsImported;
+            AssetDatabase.importPackageFailed += OnTmpEssentialsFailed;
+            AssetDatabase.ImportPackage(essentialsPkg, false);
         }
 
-        [MenuItem("Robótica Industrial/4. Restaurar Todas las Bandejas Normales", false, 32)]
-        public static void MenuResetAllTrays()
+        private static void OnTmpEssentialsImported(string packageName)
+        {
+            if (!packageName.Contains("TMP Essential")) return;
+            UnsubscribeImportCallbacks();
+            AssetDatabase.Refresh();
+            EditorApplication.delayCall += () => BuildOrRefreshLaboratoryInCurrentScene(saveScene: true);
+        }
+
+        private static void OnTmpEssentialsFailed(string packageName, string error)
+        {
+            if (!packageName.Contains("TMP Essential")) return;
+            UnsubscribeImportCallbacks();
+            Debug.LogError($"[Robótica Industrial] Falló la importación de TMP Essential Resources: {error}");
+        }
+
+        private static void UnsubscribeImportCallbacks()
+        {
+            AssetDatabase.importPackageCompleted -= OnTmpEssentialsImported;
+            AssetDatabase.importPackageFailed -= OnTmpEssentialsFailed;
+        }
+
+        [MenuItem("Robótica Industrial/2. Simular Sensor en Escena", false, 30)]
+        public static void MenuSimulateSensor()
         {
             ConveyorSimulationManager mgr = Object.FindObjectOfType<ConveyorSimulationManager>();
             if (mgr != null)
             {
-                foreach (var t in mgr.trays)
-                {
-                    if (t == null) continue;
-                    t.orientationState = TrayOrientationState.Correcta;
-                    t.loadState = TrayLoadState.ConPieza;
-                    t.RefreshVisualState();
-                }
+                mgr.SimulateSensorFromUIButton();
                 SceneView.RepaintAll();
             }
         }
 
         public static void BuildOrRefreshLaboratoryInCurrentScene(bool saveScene)
         {
-            // Configurar cámara principal
+            if (!Directory.Exists(PrefabsDir))
+            {
+                Directory.CreateDirectory(PrefabsDir);
+            }
+
+            // 1. Configurar cámara principal
             Camera mainCam = Camera.main;
             if (mainCam == null)
             {
@@ -108,7 +142,7 @@ namespace LaboratorioRobotica.EditorTools
             camCtrl.pitch = 30f;
             camCtrl.ApplyCameraTransformImmediate();
 
-            // Configurar iluminación del laboratorio
+            // 2. Configurar iluminación
             Light dirLight = Object.FindObjectOfType<Light>();
             if (dirLight == null)
             {
@@ -121,17 +155,58 @@ namespace LaboratorioRobotica.EditorTools
             dirLight.shadows = LightShadows.Soft;
             dirLight.transform.rotation = Quaternion.Euler(48f, -38f, 0f);
 
-            // Crear o reconstruir el gestor de simulación del laboratorio
-            ConveyorSimulationManager manager = Object.FindObjectOfType<ConveyorSimulationManager>();
-            if (manager == null)
+            // 3. Construir la Banda y Objetos Esenciales (SIN PISO) y guardarla como Prefab
+            ConveyorSimulationManager existingManager = Object.FindObjectOfType<ConveyorSimulationManager>();
+            if (existingManager != null)
             {
-                GameObject root = new GameObject("Simulacion_Laboratorio_Robotica_FMS");
-                manager = root.AddComponent<ConveyorSimulationManager>();
+                Object.DestroyImmediate(existingManager.gameObject);
             }
 
+            GameObject conveyorRoot = new GameObject("BandaTransportadora_FMS");
+            ConveyorSimulationManager manager = conveyorRoot.AddComponent<ConveyorSimulationManager>();
             manager.RebuildEntireLaboratoryScene();
 
-            // Enfocar la vista de Escena (SceneView) hacia la banda transportadora
+            AssetDatabase.SaveAssets();
+            PrefabUtility.SaveAsPrefabAssetAndConnect(conveyorRoot, ConveyorPrefabPath, InteractionMode.AutomatedAction);
+
+            // 4. Construir el Panel UI en Canvas (UnityEngine.UI) y guardarlo como Prefab
+            ConveyorUIPanel existingUI = Object.FindObjectOfType<ConveyorUIPanel>();
+            if (existingUI != null)
+            {
+                Object.DestroyImmediate(existingUI.gameObject);
+            }
+
+            Sprite roundedSprite = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd");
+            Sprite knobSprite = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/Knob.psd");
+            ConveyorUIPanel uiPanel = ConveyorUIPanel.CreateSimpleCanvasHierarchy(roundedSprite, knobSprite);
+            uiPanel.simulationManager = manager;
+            if (uiPanel.toggleBeltButton != null)
+                UnityEditor.Events.UnityEventTools.AddPersistentListener(uiPanel.toggleBeltButton.onClick, uiPanel.OnToggleBeltClicked);
+            if (uiPanel.simulateSensorButton != null)
+                UnityEditor.Events.UnityEventTools.AddPersistentListener(uiPanel.simulateSensorButton.onClick, uiPanel.OnSimulateSensorClicked);
+            if (uiPanel.speedSlider != null)
+                UnityEditor.Events.UnityEventTools.AddPersistentListener(uiPanel.speedSlider.onValueChanged, uiPanel.OnSpeedSliderChanged);
+
+            PrefabUtility.SaveAsPrefabAssetAndConnect(uiPanel.gameObject, UIPanelPrefabPath, InteractionMode.AutomatedAction);
+
+            // Registrar la referencia de la escena en la instancia del Prefab UI
+            SerializedObject so = new SerializedObject(uiPanel);
+            SerializedProperty mgrProp = so.FindProperty("simulationManager");
+            if (mgrProp != null)
+            {
+                mgrProp.objectReferenceValue = manager;
+                so.ApplyModifiedPropertiesWithoutUndo();
+            }
+
+            // 5. Asegurar EventSystem en la escena para interacción con botones/slider UI
+            if (Object.FindObjectOfType<EventSystem>() == null)
+            {
+                GameObject esGo = new GameObject("EventSystem");
+                esGo.AddComponent<EventSystem>();
+                esGo.AddComponent<StandaloneInputModule>();
+            }
+
+            // Enfocar la vista de Escena hacia la banda transportadora
             if (SceneView.lastActiveSceneView != null)
             {
                 SceneView.lastActiveSceneView.LookAt(
@@ -152,13 +227,13 @@ namespace LaboratorioRobotica.EditorTools
                 Scene activeScene = SceneManager.GetActiveScene();
                 EditorSceneManager.MarkSceneDirty(activeScene);
                 EditorSceneManager.SaveScene(activeScene, scenePath);
+                AssetDatabase.SaveAssets();
                 AssetDatabase.Refresh();
             }
 
-            Selection.activeGameObject = manager.gameObject;
-            Debug.Log("[Laboratorio Robótica Industrial] Escena 3D generada a escala 1:1 (484.5 cm x 138.5 cm, altura 96 cm). Presiona PLAY (▶) para iniciar la simulación interactiva.");
+            Selection.activeGameObject = uiPanel.gameObject;
+            Debug.Log("[Robótica Industrial] Prefabs creados en Assets/LaboratorioRobotica/Prefabs: 'BandaTransportadora_FMS.prefab' (sin piso) y 'Canvas_PanelControlBanda.prefab' (Unity UI).");
         }
     }
 }
 #endif
-

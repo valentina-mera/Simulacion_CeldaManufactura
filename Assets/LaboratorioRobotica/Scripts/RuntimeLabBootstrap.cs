@@ -3,8 +3,8 @@ using UnityEngine;
 namespace LaboratorioRobotica
 {
     /// <summary>
-    /// Garantiza que al presionar Play (▶) en cualquier escena de Unity, si aún no se ha instanciado
-    /// el controlador del laboratorio, se cree y configure automáticamente toda la simulación 3D.
+    /// Garantiza que al presionar Play (▶) estén presentes tanto la banda transportadora
+    /// como el Panel UI (Canvas) y el EventSystem.
     /// </summary>
     public static class RuntimeLabBootstrap
     {
@@ -14,10 +14,18 @@ namespace LaboratorioRobotica
             ConveyorSimulationManager existing = Object.FindObjectOfType<ConveyorSimulationManager>();
             if (existing == null)
             {
-                GameObject root = new GameObject("Simulacion_Laboratorio_Robotica_FMS");
+                GameObject root = new GameObject("BandaTransportadora_FMS");
                 existing = root.AddComponent<ConveyorSimulationManager>();
                 existing.RebuildEntireLaboratoryScene();
             }
+
+            ConveyorUIPanel uiPanel = Object.FindObjectOfType<ConveyorUIPanel>();
+            if (uiPanel == null)
+            {
+                uiPanel = ConveyorUIPanel.CreateSimpleCanvasHierarchy();
+            }
+            uiPanel.simulationManager = existing;
+            ConveyorUIPanel.EnsureEventSystemExists();
 
             Camera mainCam = Camera.main;
             if (mainCam == null)
@@ -51,4 +59,3 @@ namespace LaboratorioRobotica
         }
     }
 }
-

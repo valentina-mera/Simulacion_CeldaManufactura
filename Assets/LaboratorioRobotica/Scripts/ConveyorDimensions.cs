@@ -192,6 +192,22 @@ namespace LaboratorioRobotica
                 return cached;
             }
 
+#if UNITY_EDITOR
+            string safeName = key;
+            foreach (char c in System.IO.Path.GetInvalidFileNameChars())
+            {
+                safeName = safeName.Replace(c, '_');
+            }
+            string matDir = "Assets/LaboratorioRobotica/Materials";
+            string assetPath = $"{matDir}/{safeName}.mat";
+            Material existingAsset = UnityEditor.AssetDatabase.LoadAssetAtPath<Material>(assetPath);
+            if (existingAsset != null)
+            {
+                MaterialCache[fullKey] = existingAsset;
+                return existingAsset;
+            }
+#endif
+
             Shader shader = Shader.Find("Universal Render Pipeline/Lit");
             if (shader == null) shader = Shader.Find("HDRP/Lit");
             if (shader == null) shader = Shader.Find("Standard");
@@ -215,6 +231,17 @@ namespace LaboratorioRobotica
                 Color finalEmission = emissionColor == default ? color * 1.8f : emissionColor;
                 if (mat.HasProperty("_EmissionColor")) mat.SetColor("_EmissionColor", finalEmission);
             }
+
+#if UNITY_EDITOR
+            if (!Application.isPlaying)
+            {
+                if (!System.IO.Directory.Exists(matDir))
+                {
+                    System.IO.Directory.CreateDirectory(matDir);
+                }
+                UnityEditor.AssetDatabase.CreateAsset(mat, assetPath);
+            }
+#endif
 
             MaterialCache[fullKey] = mat;
             return mat;

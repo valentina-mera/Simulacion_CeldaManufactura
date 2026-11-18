@@ -43,13 +43,13 @@ namespace LaboratorioRobotica
         public RobotStationAnimator linkedRobot;
 
         // Referencias visuales de los LEDs de los 4 sensores magnéticos y la baliza luminosa
-        private Renderer _ledInPlace;
-        private Renderer _ledID0;
-        private Renderer _ledID1;
-        private Renderer _ledID2;
-        private Renderer _stackLightRed;
-        private Renderer _stackLightGreen;
-        private Light _beaconPointLight;
+        [SerializeField] private Renderer _ledInPlace;
+        [SerializeField] private Renderer _ledID0;
+        [SerializeField] private Renderer _ledID1;
+        [SerializeField] private Renderer _ledID2;
+        [SerializeField] private Renderer _stackLightRed;
+        [SerializeField] private Renderer _stackLightGreen;
+        [SerializeField] private Light _beaconPointLight;
 
         // Evita re-detener inmediatamente la misma bandeja al salir del sensor
         private TrayController _lastReleasedTray;
