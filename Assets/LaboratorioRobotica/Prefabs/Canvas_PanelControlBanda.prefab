@@ -442,7 +442,7 @@ MonoBehaviour:
   m_FlexibleWidth: -1
   m_FlexibleHeight: -1
   m_LayoutPriority: 1
---- !u!1 &3847746454923575355
+--- !u!1 &2597733032951242159
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -450,9 +450,9 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 3895030600006233904}
-  - component: {fileID: 4346817029776428135}
-  - component: {fileID: 4199701061056721355}
+  - component: {fileID: 1554938675802962819}
+  - component: {fileID: 8503379686807867279}
+  - component: {fileID: 131922279380664647}
   m_Layer: 0
   m_Name: Text (TMP)
   m_TagString: Untagged
@@ -460,13 +460,13 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!224 &3895030600006233904
+--- !u!224 &1554938675802962819
 RectTransform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 3847746454923575355}
+  m_GameObject: {fileID: 2597733032951242159}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
@@ -479,21 +479,21 @@ RectTransform:
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: -24, y: -8}
   m_Pivot: {x: 0.5, y: 0.5}
---- !u!222 &4346817029776428135
+--- !u!222 &8503379686807867279
 CanvasRenderer:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 3847746454923575355}
+  m_GameObject: {fileID: 2597733032951242159}
   m_CullTransparentMesh: 1
---- !u!114 &4199701061056721355
+--- !u!114 &131922279380664647
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 3847746454923575355}
+  m_GameObject: {fileID: 2597733032951242159}
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: f4688fdb7df04437aeb418b961361dc5, type: 3}
@@ -1329,7 +1329,7 @@ MonoBehaviour:
   toggleBeltButton: {fileID: 1949546747767263888}
   toggleBeltButtonText: {fileID: 400760190849623545}
   simulateSensorButton: {fileID: 5481784458883022986}
-  simulateSensorButtonText: {fileID: 4199701061056721355}
+  simulateSensorButtonText: {fileID: 131922279380664647}
   speedSlider: {fileID: 7665354998542447182}
   speedValueText: {fileID: 718854609119398184}
   builtLayoutVersion: 2
@@ -1497,7 +1497,7 @@ RectTransform:
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
-  - {fileID: 3895030600006233904}
+  - {fileID: 1554938675802962819}
   m_Father: {fileID: 1359631184488053166}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
