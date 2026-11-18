@@ -8,7 +8,7 @@ namespace LaboratorioRobotica
     /// </summary>
     public static class RuntimeLabBootstrap
     {
-        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+        //[RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void EnsureSimulationInScene()
         {
             ConveyorSimulationManager existing = Object.FindObjectOfType<ConveyorSimulationManager>();

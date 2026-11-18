@@ -67,6 +67,6 @@
         "*.sln": "*.csproj",
         "*.slnx": "*.csproj"
     },
-    "dotnet.defaultSolution": "Simulacion_CeldaManufactura.slnx",
+    "dotnet.defaultSolution": "Simulacion_CeldaManufactura_KukaScorbot.slnx",
     "dotnet.enableWorkspaceBasedDevelopment": false
 }
