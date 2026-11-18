@@ -1,6 +1,4 @@
-
 using UnityEngine;
-using UnityEngine.InputSystem;
 using UnityEngine.EventSystems;
 
 public class MostrarPanelRobot : MonoBehaviour
@@ -56,15 +54,14 @@ public class MostrarPanelRobot : MonoBehaviour
 
     void Update()
     {
-        if (Mouse.current == null ||
-            camaraPrincipal == null ||
+        if (camaraPrincipal == null ||
             panelControl == null)
         {
             return;
         }
 
-        // Detectar clic izquierdo
-        if (Mouse.current.leftButton.wasPressedThisFrame)
+        // Detectar clic izquierdo (Input clásico)
+        if (Input.GetMouseButtonDown(0))
         {
             // No interferir con los botones y sliders
             if (EventSystem.current != null &&
@@ -73,8 +70,7 @@ public class MostrarPanelRobot : MonoBehaviour
                 return;
             }
 
-            Vector2 posicionMouse =
-                Mouse.current.position.ReadValue();
+            Vector3 posicionMouse = Input.mousePosition;
 
             Ray rayo = camaraPrincipal.ScreenPointToRay(
                 posicionMouse
