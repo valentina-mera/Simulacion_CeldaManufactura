@@ -7,34 +7,33 @@ public class PanelUniversalRobotUI : MonoBehaviour
     public static PanelUniversalRobotUI Instancia { get; private set; }
 
     [Header("Contenedor Visual del Panel")]
-    public GameObject contenedorVisual; // El Panel hijo que se oculta/muestra
+    public GameObject contenedorVisual;
     public TMP_Text textoNombreRobot;
 
     [Header("Filas de Articulaciones (J1 a J6)")]
-    public GameObject[] filasArticulaciones = new GameObject[6]; // Contenedor de cada fila (Label + Slider + Valor)
+    public GameObject[] filasArticulaciones = new GameObject[6];
     public Slider[] slidersJ = new Slider[6];
     public TMP_Text[] textosValorJ = new TMP_Text[6];
 
-    [Header("Control de Garra")]
+    [Header("Control de Garra (Botón Abrir/Cerrar)")]
     public GameObject filaGarra;
-    public Slider sliderGarra;
-    public TMP_Text textoValorGarra;
+    public Button botonGarra;
+    public TMP_Text textoBotonGarra;
 
     [Header("Botones de Acción")]
     public Button botonPosicionOriginal;
     public Button botonCerrar;
 
     private RobotEstandarAdapter robotActual;
+    private bool garraAbierta = true;
 
     void Awake()
     {
         Instancia = this;
 
-        // Inicia oculto al darle Play para que se vea la escena normal
         if (contenedorVisual != null)
             contenedorVisual.SetActive(false);
 
-        // Configurar eventos de los 6 sliders
         for (int i = 0; i < 6; i++)
         {
             int indice = i;
@@ -48,20 +47,8 @@ public class PanelUniversalRobotUI : MonoBehaviour
             });
         }
 
-        // Configurar evento de la garra
-        if (sliderGarra != null)
-        {
-            sliderGarra.minValue = 0f;
-            sliderGarra.maxValue = 1f;
-            sliderGarra.onValueChanged.AddListener(valor =>
-            {
-                if (robotActual != null)
-                {
-                    robotActual.EstablecerGarra(valor);
-                    textoValorGarra.text = $"{valor * 100f:0}%";
-                }
-            });
-        }
+        if (botonGarra != null)
+            botonGarra.onClick.AddListener(AlternarGarra);
 
         if (botonPosicionOriginal != null)
             botonPosicionOriginal.onClick.AddListener(RestaurarHome);
@@ -72,7 +59,6 @@ public class PanelUniversalRobotUI : MonoBehaviour
 
     public void AbrirParaRobot(RobotEstandarAdapter robot)
     {
-        // Si se vuelve a hacer clic sobre el mismo robot ya abierto, cierra el panel
         if (robotActual == robot && contenedorVisual.activeSelf)
         {
             CerrarPanel();
@@ -82,7 +68,6 @@ public class PanelUniversalRobotUI : MonoBehaviour
         robotActual = robot;
         textoNombreRobot.text = robot.nombreMostrarEnPanel;
 
-        // Activar solo las filas según los grados de libertad (5 o 6)
         for (int i = 0; i < 6; i++)
         {
             bool activo = i < robot.gradosDeLibertad;
@@ -99,18 +84,34 @@ public class PanelUniversalRobotUI : MonoBehaviour
             }
         }
 
-        // Mostrar u ocultar fila de garra
         if (filaGarra != null)
             filaGarra.SetActive(robot.tieneGarra);
 
-        if (robot.tieneGarra && sliderGarra != null)
+        if (robot.tieneGarra)
         {
-            float apertura = robot.ObtenerGarra();
-            sliderGarra.SetValueWithoutNotify(apertura);
-            textoValorGarra.text = $"{apertura * 100f:0}%";
+            garraAbierta = robot.ObtenerGarra() >= 0.5f;
+            ActualizarVisualBotonGarra();
         }
 
         contenedorVisual.SetActive(true);
+    }
+
+    public void AlternarGarra()
+    {
+        if (robotActual == null) return;
+
+        garraAbierta = !garraAbierta;
+        robotActual.EstablecerGarra(garraAbierta ? 1f : 0f);
+        ActualizarVisualBotonGarra();
+    }
+
+    private void ActualizarVisualBotonGarra()
+    {
+        if (textoBotonGarra != null)
+        {
+            // Muestra la acción disponible al hacer clic (o el estado actual)
+            textoBotonGarra.text = garraAbierta ? "Cerrar Garra" : "Abrir Garra";
+        }
     }
 
     public void RestaurarHome()
@@ -119,7 +120,6 @@ public class PanelUniversalRobotUI : MonoBehaviour
 
         robotActual.VolverAPosicionOriginal();
 
-        // Actualizar visualmente los sliders y textos
         for (int i = 0; i < robotActual.gradosDeLibertad; i++)
         {
             float ang = robotActual.ObtenerAngulo(i);
@@ -127,11 +127,10 @@ public class PanelUniversalRobotUI : MonoBehaviour
             textosValorJ[i].text = $"{ang:0}°";
         }
 
-        if (robotActual.tieneGarra && sliderGarra != null)
+        if (robotActual.tieneGarra)
         {
-            float ap = robotActual.ObtenerGarra();
-            sliderGarra.SetValueWithoutNotify(ap);
-            textoValorGarra.text = $"{ap * 100f:0}%";
+            garraAbierta = robotActual.ObtenerGarra() >= 0.5f;
+            ActualizarVisualBotonGarra();
         }
     }
 

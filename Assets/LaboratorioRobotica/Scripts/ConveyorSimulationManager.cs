@@ -13,7 +13,7 @@ namespace LaboratorioRobotica
         ManualPause = 4
     }
 
-    [ExecuteAlways]
+    //[ExecuteAlways]
     public class ConveyorSimulationManager : MonoBehaviour
     {
         [Header("Parámetros de Operación de la Banda")]
@@ -50,6 +50,7 @@ namespace LaboratorioRobotica
 
         private void OnEnable()
         {
+            if (!Application.isPlaying) return;
             // Eliminar piso antiguo si existía en la escena
             Transform oldFloor = transform.Find("EntornoLaboratorio");
             if (oldFloor != null)
